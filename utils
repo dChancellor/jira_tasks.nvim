@@ -1,0 +1,77 @@
+local M = {}
+
+local ui = require("get-jira-tasks.ui")
+local utils = require("get-jira-tasks.utils")
+
+function M.parse_bullet_list(node, level, result)
+  result = result or {}
+  level = level or 0
+
+  if node.type == "bulletList" then
+    for _, child in ipairs(node.content) do
+      M.parse_bullet_list(child, level, result)
+    end
+  elseif node.type == "listItem" then
+    for _, child in ipairs(node.content) do
+      if child.type == "paragraph" then
+        local text_content = ""
+        for _, text_node in ipairs(child.content) do
+          if text_node.type == "text" then
+            text_content = text_content .. text_node.text
+          end
+        end
+        table.insert(result, string.rep("   ", level) .. "* " .. text_content)
+      elseif child.type == "bulletList" then
+        M.parse_bullet_list(child, level + 1, result)
+      end
+    end
+  end
+
+  return result
+end
+
+function M.traverse_description(top_content)
+  local lines = {}
+  local function traverse(content)
+    for _, sub_content in ipairs(content) do
+      if sub_content.text then
+        table.insert(lines, sub_content.text)
+      elseif sub_content.type == "bulletList" then
+        local bullet_list = M.parse_bullet_list(sub_content)
+        for _, line in ipairs(bullet_list) do
+          table.insert(lines, line)
+        end
+      elseif sub_content.attrs then
+        table.insert(lines, sub_content.attrs.href)
+      elseif sub_content.content then
+        traverse(sub_content.content)
+      else
+        print("Unknown content type", vim.inspect(sub_content))
+      end
+    end
+  end
+  traverse(top_content)
+  return lines
+end
+
+function M.parse_active_tickets(issues)
+  local parsed_table = {}
+  for i, issue in ipairs(issues) do
+    local desc = utils.clip_text(
+      ui.get_ticket_status_symbol(issue.fields.status) .. " " .. issue.key .. ": " .. issue.fields.summary,
+      50
+    )
+    local header = {
+      -- TODO: Stop hardcoding 50 and calculate vim columns instead
+      desc = desc,
+      key = "i" .. tostring(i),
+      action = function()
+        ui.create_ticket_window(issue)
+      end,
+    }
+    table.insert(parsed_table, header)
+  end
+  return parsed_table
+end
+
+return M
