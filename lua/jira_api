@@ -1,0 +1,60 @@
+local M = {}
+
+local utils = require("utils")
+local env = utils.load_env()
+
+local token = env.JIRA_API_TOKEN
+local assignee = env.JIRA_USER_NAME
+local base_url = env.JIRA_BASE_URL
+
+local url = base_url .. "/rest/api/3/search"
+
+local construct_auth_token = function()
+  local built_string = assignee .. ":" .. token
+  local base64_token = vim.fn.system("echo -n " .. built_string .. " | base64 -w 0")
+  return "Basic " .. base64_token
+end
+
+local headers = {
+  ["Authorization"] = construct_auth_token(),
+  ["Content-Type"] = "application/json",
+}
+
+local query = {
+  jql = 'assignee="' .. assignee .. '" and resolution="unresolved"',
+  maxResults = 5,
+  fields = "id,key,summary,description,status",
+}
+
+function M.get_active_tickets()
+  local data = {}
+  local file, _ = io.open("./cached_tasks.txt", "r")
+  if not file then
+    local curl = require("plenary.curl")
+
+    local response = curl.get(url, { query = query, headers = headers })
+    if response.status ~= 200 then
+      vim.notify("There was an error pulling Jira tickets", vim.log.levels.ERROR)
+    end
+
+    file = io.open("./cached_tasks.txt", "w")
+    if file then
+      file:write(response.body)
+    else
+      vim.notify("There was an error creating the cached file", vim.log.levels.ERROR)
+    end
+  end
+
+  if file then
+    local content = file:read("*all")
+
+    data = vim.json.decode(content)
+    file:close()
+  end
+
+  local parsed_issues = parse_active_tickets(data.issues)
+  M.issues = parsed_issues
+  return parsed_issues
+end
+
+return M
